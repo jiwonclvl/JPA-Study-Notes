@@ -1,5 +1,17 @@
 # Chapter1 JPA 소개 
 
+
+<br>
+
+# 목차
+
+> **[1. SQL을 다룰 때 발생하는 문제점](#SQL을-다룰-때-발생하는-문제점)**
+> 
+> **[2. 패러다임 불일치](#-패터다임-불일치-)**
+> 
+> **[3. JPA란 무엇인가?](#-jpajava-persistence-api란-)**
+
+
 ## JPA는 <ins>ORM(Object-Relational-Mapping) 기술 표준</ins>이다. 
 
 
