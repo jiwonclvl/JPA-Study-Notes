@@ -9,8 +9,6 @@
 > **[2. 준영속 상태와 지연 로딩](#준영속-상태와-지연-로딩)**
 >
 > **[3. OSIV](#OSIV)**
->
-> **[4. 너무 엄격한 계층](#너무-엄격한-계층)**
 
 
 <br>
@@ -222,18 +220,284 @@ public interface Repository2 extends JpaRepository<Member, Long> {
 > 
 > 이때, 문제는 **JPA가 JPQL을 분석해서 SQL을 생성할 때**는 글로벌 페치 전략을 참고하지 않고 <ins>오직 JPQL 자체만 사용</ins>한다는 것이다. 
 > 
-> `SELECT m FROM Member` ➡️ Team까지 조회 
+> > `SELECT m FROM Member` 
+> > 
+> > ➡️ JPQL에는 Team에 대한 명시가 없으므로, 우선 Member만 조회하는 SQL이 실행 
 > 
-> 만약 조회한 Member 엔티티가 10개라면 Team을 조회하는 SQL도 10번 실행된다. 
+> <br>
+>
+> > `SELECT m FROM Member WHERE id = ?` 
+> > 
+> > ➡️ 여러 맴버를 조회한다면 Team 조회 쿼리도 그에 맞춰 추가로 실행되어 N + 1발생
+> > 
+> > - Member 전체 조회 쿼리 1번
+> > - 각 Member가 소속된 Team을 조회하는 쿼리 N번
 > 
-> 이와 같이 N + 1이 발생하면 SQL이 상당히 많이 노출될 수 있으므로 성능상의 치명적이다. 
-
+> 
+> 이와 같이 N + 1이 발생하면 SQL이 상당히 많이 노출될 수 있으므로 성능상의 치명적이다.  ➡️ **페치 조인으로 해결 가능** 
 
 <br>  
 
-## OSIV
+#### JPQL 페치 조인 
+
+JPQL을 호출하는 시점에 함께 로딩할 엔티티를 선택하는 방법 
+
+>  💡 연관된 **엔티티를 이미 로딩**했으므로 <ins>글로벌 페치 전략이 적용되지 않는다.</ins> 
 
 <br>
 
-## 너무 엄격한 계층
+**[단점]**
+
+- 무분별하게 사용하면 레포지토리 메소드가 증가할 수 있다. 
+
+**EX** 
+
+1. member만 조회하는 경우
+2. member와 연관된 team을 조회하는 경우 
+
+2가지 경우를 모두 만족하기 위해서는 2개의 repository를 만들어야 한다. 
+
+➡️ 최적화는 할 수 있지만 **뷰와 레포지토리 간에 논리적인 의존관계가 발생** 
+
+<br>
+
+> **🤔 뷰와 레포지토리 간에 논리적인 의존관계가 발생**
+> 
+> 어떤 페이지에서는 Member만 조회 → findMembers()
+> 
+> 다른 페이지에서는 Member와 연관된 Team도 함께 조회 → findMembersWithTeam()
+> 
+> 이렇게 되면 Repository에 뷰(혹은 서비스)가 요구하는 형태로 메서드가 점점 늘어나게 된다. 
+
+
+<br>
+
+#### 강제로 초기화
+
+
+`영속성 컨텍스트가 살아있을 때` **프레젠테이션 계층이 필요한 엔티티를 강제로 초기화해서 반환**하는 방법
+
+**설정: 지연 로딩을 전략으로 선택**
+
+<br>
+
+**[기본적인 지연 로딩 흐름]** 
+
+```java
+@Transactional
+public Member findMember(Long memberId) {
+    Member member = repository.findMemberById(memberId);
+    
+    Team team = member.team(); //프록시 객체만 반환(프록시 객체의 주소만 지니는 상태)
+  
+    ...
+
+    team.getName(); // 프록시 객체 초기화 (실제 엔티티 값으로 초기화됨) 
+}
+```
+<br>
+
+**[강제 초기화]**
+
+```java
+@Transactional
+public Member findMember(Long memberId) {
+    Member member = repository.findMemberById(memberId);
+    
+    member.team().getName(); //프록시 강제 초기화
+    
+    return member;
+}
+```
+
+➡️ 프리젠테이션 객체에서 필요한 객체를 영속성 컨텍스트가 살아 있을 때 강제로 초기화 해주면 준영속 상태가 되어도 사용할 수 있다. 
+
+![Image](https://github.com/user-attachments/assets/1aac0eca-2651-400c-b21b-9885aeaf83ad)
+
+<br>
+
+> ⚠️ 프리젠테이션 계층을 위해 서비스 계층에서 로직을 구현하는 것은 좋지 않다. 
+>
+> ➡️ 각 계층의 역할 분리가 되어야 한다. 
+
+따라서, 이를 해결하기 위해 `FACADE 계층`을 추가하여 **프리젠테이션 계층을 위한 프록시 초기화 역할을 분리**해야한다.  
+
+<br>
+
+### FACADE 계층 추가 
+
+![Image](https://github.com/user-attachments/assets/208d6ccd-fd07-4181-9d16-aad267c689f0)
+
+**프리젠테이션 계층**과 **도메인 모델 계층** 간의 논리적 의존성을 분리 
+
+1. 프리젠테이션 계층에서 필요한 프록시 객체를 초기화한다. 
+2. 서비스 계층을 호출해서 비즈니스 로직을 실행한다. 
+3. 레포지토리를 직접 호출해서 뷰가 요구하는 엔티티를 찾는다. 
+
+```java
+@RequiredArgsConstructor
+class MemberFacade {
+    private final Service service;
+    
+    public Member findMember(Long memberId) {
+      Member member = MemberService.findMemberById(memberId);
+
+      member.team().getName(); //프록시 강제 초기화
+
+      return member;
+    }
+}
+
+class Service {
+    public Member findMember(Long memberId) {
+        return MemberRepository.findMember(memberId);
+    }
+}
+```
+
+➡️위 코드의 문제점은 <ins>하나의 계층이 더 생긴다는 것</ins>과 FACADE는 단순히 <ins>서비스 계층을 호출만 하는 위임 코드가 많을 것</ins>이라는 것이다.  
+
+
+<br>
+
+위와 같이 준영속 상태와 지연 로딩 문제를 극복하기 위해 많은 전략들을 해당 방법들은 모두 번거롭고 많은 단점들이 존재한다. 
+
+**📢이 모든 문제는 엔티티가 프리젠테이션 계층에서 준영속 상태이기 때문에 발생** ➡️ **OSIV로 해결**
+
+<br>
+
+## OSIV(Open Session In View)
+
+OSIV는 **영속성 컨텍스트를 View까지 열어둔다는 의미**이다. 
+
+<br>
+
+### 과거 OSIV: 요청 당 트랜잭션
+
+클라이언트 요청이 들어오자마자 `서블릿 필터`나 `스프링 인터셉터`에서 <ins>트랜잭션 시작 후</ins>  **요청이 끝날 때** <ins>트랜잭션 끝</ins> 
+
+
+➡️ 이를 **요청 당 트랜잭션 방식의 OSIV**라고 한다.
+
+<br>
+
+#### 문제점
+
+**컨트롤러나 뷰 같은 프리젠테이션 계층이 엔티티를 변경할 수 있다는 점**이다. 
+
+**[해결 방법]** 
+
+- 엔티티를 읽기 전용 인터페이스로 제공
+- 엔티티 레핑
+- DTO 반환 
+
+
+<br>
+
+#### 엔티티를 읽기 전용 인터페이스로 제공 
+
+읽기 전용 메서드만 제공하는 인터페이스를 제공
+
+<br>
+
+#### 엔티티 레핑
+
+
+엔티티의 읽기 전용 메소드만 가지고 있는 엔티티를 감싼 객체를 만들고 이를 반환하는 방법 
+
+```java
+public MemberWrapper (member) {
+    this.member = member;
+}
+```
+<br>
+
+#### DTO 반환
+
+가장 전통적인 방법으로 단순히 데이터만 전달하는 객체인 DTO를 생성해서 반환한다. 
+
+>  해당 방법은 **OSIV를 사용하는 장점을 살릴 수 없고** 엔티티를 거의 복사한 듯한 **DTO 클래스도 하나 더 만들어야 한다.** 
+
+---
+
+➡️ 위의 모든 방법들은 코드량이 상당히 증가한다는 단점이 있다. 따라서 최근에는 거의 사용 ❌
+
+<br>
+
+### 스프링 OSIV 
+
+위의 문제를 보안하기 위한 스프링 프레임워크에서 제공하는 OSIV이다. 
+
+<br>
+
+
+#### 스프링 OSIV분석 
+
+스프링 프레임워크가 제공하는 OSIV는 <ins>**비즈니스 계층에서 트랜잭션을 사용하는 OSIV**</ins>이다. 
+
+<br>
+
+#### 동작 과정
+
+1. 클라이언트 요청
+2. 영속성 컨텍스트를 생성 (트랜잭션은 시작 ❌)
+3. 서비스에서 앞에서 생성한 영속성 컨텍스트에 트랜잭션 시작 
+4. 트랜잭션 커밋 시 영속성 컨텍스트 플러시 
+5. **트랜잭션만 종료**하고 <ins>**영속성 컨텍스트는 살려둔다.** 
+6. 요청이 끝나면 영속성 컨텍스트 종료 
+
+> **📢 트랜잭션 없이 읽기**
+> 
+> - 영속성 컨텍스트는 트랜잭션 내에서 엔티티 조회 및 수정이 가능하다. 
+> - 영속성 컨텍스트는 트랜잭션 외에서는 오직 읽기만 가능하다. ➡️ 이를 트랜잭션 없이 읽기(NonTransactional reads)
+> 
+
+위의 특징을 이용하여 프리젠테이션 계층에서 엔티티 수정이 가능했던 **기존 OSIV의 단점을 보안**한다. 
+
+또한, 트랜잭션 없이 읽기를 사용해서 프리젠테이션 계층에서도 지연로딩이 가능해진다. 
+
+<br>
+
+
+#### 스프링 OSIV 주의사항
+
+**프리젠테이션 계층에서 엔티티를 수정한 직후에 트랜잭션을 시작하는 서비스 계층을 호출하면 문제가 발생**한다. 
+
+```java
+class Controller {
+    public String viewMember(Long id) {
+        Member member = memberService.findMember(id);
+        member.setName("이름 수정");
+        
+        memberService.biz(); // 이름 수정 후 서비스 호출 
+    }
+}
+```
+스프링 OSIV는 같은 **영속성 컨텍스트를 여러 트랜잭션이 공유할 수 있기 때문에** 위와 같은 상황에서 <ins>biz()가 수행되고 플러시</ins>를 하면 이전에 🚨**프리젠테이션 계층에서 변경되었던 
+엔티티도 데이터베이스에 반영되는 문제가 발생**한다.🚨
+
+
+**➡️ 트랜잭션이 있는 비즈니스 로직을 모두 호출하고 나서 변경하면 된다.** 
+
+
+<br>
+
+> **💡 OSIV는 같은 JVM을 벗어난 원격 상황에서 사용 불가하다.** 
+> 
+> 원격지인 클라이언트에서 엔티티를 지연로딩하는 것이 불가능하다. 
+> 
+> **[JSON 응답]**
+> 
+> ```json
+> {
+> "userId": 1,
+> "name": "Alice",
+> "orders": null
+> }
+> ```
+> 
+> **JSON 응답 안에 포함되지 않은 데이터를 클라이언트가 나중에 lazy loading 식으로 자동으로 불러올 수는 없다.**
+> 
+> ➡️ 따라서 클라이언트가 필요한 데이터를 모두 JSON으로 생성해서 반환해주어야 한다. 
+> 
 
