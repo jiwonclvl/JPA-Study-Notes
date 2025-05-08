@@ -112,6 +112,117 @@ JPA 표준 예외들은 `PersistenceException`(RuntimeException의 자식)의 �
 
 ## 엔티티 비교
 
+영속성 컨텍스트 내부에는 엔티티 인스턴스 보관을 위한 1차 캐시가 있다. 
+
+> 💡 **1차 캐시는 영속성 컨텍스트와 생명주기를 같이 한다.** 
+
+
+<br>
+
+**[1차 캐시]**
+
+- 영속성 컨텍스트를 통해 데이터 저장 및 조회 시 1차 캐시에 해당 엔티티가 저장된다.
+
+
+- 변경 감지 기능을 제공한다. 
+
+
+- 데이터 베이스르 통하지 않고 데이터 조회가 가능하다. 
+
+
+- <ins>**애플리케이션 수준의 반복 가능한 읽기**</ins> (가장 큰 장점)
+    
+    ➡️ 엔티티 조회 시 **항상 같은 주소값**을 가지는 인스턴스를 반환하는 것을 의미
+
+<br>
+
+### 영속성 컨텍스트가 같을 때 엔티티 비교 
+
+가정: 테스트 클래스에서 `@Transactional`를 붙일 경우
+
+```java
+@Transactinal 
+public class MemberServiceTest {
+    ...
+}
+
+@Transactinal
+public class MemberService {
+    
+}
+```
+
+> 💬 위의 코드에서 테스트와 서비스 모두 @Transactional 어노테이션을 사용 
+> 
+>  ➡️  기본 전략으로 이미 시작된 트랜잭션이 **있다면** 해당 트랜잭션에 **참여** / **없다면** 새로운 트랜잭션 **생성**
+
+테스트의 범위와 트랜잭션의 범위가 같다. 따라서, <ins>**테스트 전체는 동일한 영속성 컨텍스트에 접근**</ins>한다. 
+
+<br>
+
+> 💡 **영속성 컨텍스트가 같다면** 
+>  
+> 엔티티를 비교할 때 아래의 3가지 조건을 모두 만족한다. 
+> 
+> - 동일성(Identical): **`==` 비교가 같다.** 
+> - 동등성(Equinalent): **`equals()` 비교가 같다.**
+> - 데이터베이스 동등성: `@Id`인 **데이터베이스 식별자가 같다.** 
+
+
+> ⚠️ **테스트 클래스에서 `@Transactional` 적용**
+> 
+> 테스트가 끝날 때 트랜잭션을 <ins>커밋하지 않고 강제로 롤백한다.</ins> 
+
+<br>
+
+### 영속성 컨텍스트가 다를 때 엔티티 비교
+
+
+가정: 서비스 클래스 & Repository 클래스에만 `@Transactional`이 붙은 경우
+
+```java
+public class MemberServiceTest {
+    ...
+    
+    @Test
+    void 회원가입() {
+        //given
+        Member member =  new Member("회원1");
+        
+        //when
+        Long id = memberService.join(member);
+        
+        //then
+        Member findMember =  memberRepository.findOne(id);
+        assertTrue(member==findMember);
+    }
+}
+
+@Transactinal
+public class MemberService {
+    ...
+    public Long join(Member member) {
+        memberRepostitory.save(member); //레포에 맴버 저장
+        return member.getId(); //해당 맴버의 ID 응답
+    }
+}
+
+//에시를 위해 @Transactional 선언
+@Transactinal
+public class MemberRepository {
+    ...
+}
+```
+
+
+
+
+
+
+
+
+<br>
+
 ## 프록시 심화 주제
 
 ## 성능 최적화
